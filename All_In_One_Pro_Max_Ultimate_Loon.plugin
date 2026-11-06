@@ -1,0 +1,68 @@
+#!name = All In One Pro Max Ultimate - Loon
+#!desc = Chuyen tu Shadowrocket: YouTube bo loc quang cao, Spotify (thu nghiem), Sub-Store; bo URL 404
+#!author = Ban chuyen doi Loon tu cau hinh nguoi dung cung cap
+#!loon_version = 3.5.1(983)
+#!system = iOS,iPadOS
+#!date = 2026-11-06
+#!tag = Media,Utilities
+#!type = normal
+
+# REQUIRES: Loon 3.5.1 (Build 983)+. This is a plugin, not a full proxy profile.
+# NOTICE: no guarantee of paid entitlements; third-party scripts may break or log sensitive data.
+# If Sub-Store is already installed as a separate plugin, disable its three entries below.
+# Paths from duyvinh09/Module_IOS were removed because sampled files return HTTP 404.
+
+[Argument]
+youtube_ads = switch,true,tag=YouTube - chan endpoint quang cao
+youtube_feed = switch,true,tag=YouTube - loc quang cao tren feed (app2smile)
+youtube_enhance = switch,false,tag=YouTube - xu ly video nang cao (Maasea - thu nghiem)
+youtube_tier = switch,false,tag=YouTube - sua ctier=L (thu nghiem)
+spotify_enabled = switch,true,tag=Spotify - xu ly API (thu nghiem)
+substore_enabled = switch,true,tag=Sub-Store - bat script
+substore_cron = input,"0 0 * * *",tag=Sub-Store - lich dong bo
+sync_success_notify = switch,true,tag=Sub-Store - thong bao khi dong bo
+cors = input,"https://sub-store.vercel.app,http://substore.stash,https://substore.stash",tag=Sub-Store - CORS
+
+[Rule]
+# Block UDP/QUIC for only two YouTube hosts. Other UDP traffic unaffected.
+AND,((DOMAIN-SUFFIX,googlevideo.com),(PROTOCOL,UDP)),REJECT
+AND,((DOMAIN,youtubei.googleapis.com),(PROTOCOL,UDP)),REJECT
+
+[Rewrite]
+# YouTube: selected ad/tracking endpoints. HTTP 200 empty body, matching source's reject-200.
+request if ${youtube_ads} == true && ${url} ~= /^https?:\/\/[\w-]+\.googlevideo\.com\/(?!(?:dclk_video_ads|videoplayback\?)).+[&?]oad(?:[=&]|$)/ then reject(200)
+request if ${youtube_ads} == true && ${url} ~= /^https?:\/\/(?:www|s)\.youtube\.com\/api\/stats\/ads(?:[\/?]|$)/ then reject(200)
+request if ${youtube_ads} == true && ${url} ~= /^https?:\/\/(?:www|s)\.youtube\.com\/(?:pagead|ptracking)(?:[\/?]|$)/ then reject(200)
+request if ${youtube_ads} == true && ${url} ~= /^https?:\/\/s\.youtube\.com\/api\/stats\/qoe\?adcontext/ then reject(200)
+# Replacement for Shadowrocket [Map Local] (empty 200 for initplayback containing &oad).
+request if ${youtube_ads} == true && ${url} ~= /^https?:\/\/[\w-]+\.googlevideo\.com\/initplayback.*[&?]oad(?:[=&]|$)/ then reject(200)
+# Optional replacement for ctier=L rewrite. Disabled by default because it may disrupt video.
+request if ${youtube_tier} == true && ${url} ~= /(^https?:\/\/[\w-]+\.googlevideo\.com\/(?!dclk_video_ads).+?)&ctier=L(&.+?),ctier,(.+)/ as tier then url.replace("${tier.1}${tier.2}${tier.3}")
+
+# Spotify: disable conditional cache for customization requests.
+request if ${spotify_enabled} == true && ${url} ~= /^https:\/\/(?:spclient\.wg\.spotify\.com|[\w-]+-spclient(?:\.wg)?\.spotify\.com)(?::443)?\/user-customization-service\/v1\/customize(?:\?.*)?$/ then request.header.del("if-none-match")
+
+[Script]
+# YouTube: first-match behavior means only ONE enabled response script for browse/next.
+# Full Maasea response path is reachable but the author tests primarily on Surge; OFF by default.
+response if ${url} ~= /^https:\/\/youtubei\.googleapis\.com\/youtubei\/v1\/(?:browse|next|player|search|reel\/reel_watch_sequence|guide|account\/get_setting|get_watch|log_event|config)(?:\?.*)?$/ then script("https://raw.githubusercontent.com/Maasea/sgmodule/master/Script/Youtube/youtube.response.js", "{\"captionLang\":\"vi\",\"blockUpload\":true,\"blockImmersive\":true,\"blockShorts\":false,\"debug\":false}") with enable=${youtube_enhance}, tag="YouTube Enhance - experimental", timeout=60, requires_body=true, binary_body_mode=true
+# Less invasive YouTube feed filter, verified source; no promise of pre-roll ad blocking.
+response if ${url} ~= /^https:\/\/youtubei\.googleapis\.com\/youtubei\/v1\/(?:browse|next)(?:\?.*)?$/ then script("https://raw.githubusercontent.com/app2smile/rules/master/js/youtube.js") with enable=${youtube_feed}, tag="YouTube Feed Ads", timeout=25, requires_body=true, binary_body_mode=true
+
+# Spotify: URLs verified reachable. These change local API data, not actual subscription status.
+request if ${url} ~= /^https:\/\/(?:spclient\.wg\.spotify\.com|[\w-]+-spclient(?:\.wg)?\.spotify\.com)(?::443)?\/(?:artistview\/v1\/artist|album-entity-view\/v2\/album)\// then script("https://raw.githubusercontent.com/app2smile/rules/master/js/spotify-json.js") with enable=${spotify_enabled}, tag="Spotify JSON", timeout=20
+response if ${url} ~= /^https:\/\/(?:spclient\.wg\.spotify\.com|[\w-]+-spclient(?:\.wg)?\.spotify\.com)(?::443)?\/(?:bootstrap\/v1\/bootstrap|user-customization-service\/v1\/customize)(?:\?.*)?$/ then script("https://raw.githubusercontent.com/app2smile/rules/master/js/spotify-proto.js") with enable=${spotify_enabled}, tag="Spotify Proto", timeout=30, requires_body=true, binary_body_mode=true
+
+# Sub-Store: kept in the exact officially published Loon legacy script form.
+# Loon still supports legacy Script entries; this retains Sub-Store's expected argument protocol.
+http-request ^https?:\/\/sub\.store\/((download)|api\/(preview|sync|(utils\/node-info))) script-path=https://github.com/sub-store-org/Sub-Store/releases/latest/download/sub-store-1.min.js,requires-body=true,max-size=-1,timeout=900,tag=Sub-Store Core,argument=[{cors}],enabled={substore_enabled}
+http-request ^https?:\/\/sub\.store script-path=https://github.com/sub-store-org/Sub-Store/releases/latest/download/sub-store-0.min.js,requires-body=true,max-size=-1,timeout=900,tag=Sub-Store Simple,argument=[{cors}],enabled={substore_enabled}
+cron {substore_cron} script-path=https://github.com/sub-store-org/Sub-Store/releases/latest/download/cron-sync-artifacts.min.js,timeout=900,tag=Sub-Store Sync,argument=[{sync_success_notify},{cors}],enabled={substore_enabled}
+
+# Disabled pending valid script sources / compatibility review:
+# SoundCloudGo+, AlightMotion, PicsArt, Wink, Truecaller, KineMaster,
+# CamScanner, BeautyPlus, Locket (RevenueCat). No paid status is synthesized.
+
+[MitM]
+# Limited to hosts actually referenced by active/optional rules; no untrusted app API hosts.
+hostname = *.googlevideo.com, youtubei.googleapis.com, www.youtube.com, s.youtube.com, -redirector*.googlevideo.com, spclient.wg.spotify.com, *-spclient.spotify.com, *-spclient.wg.spotify.com, sub.store
